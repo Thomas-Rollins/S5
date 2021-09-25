@@ -69,6 +69,44 @@ class aws_s3(S5Shell.s5shell):
             return True
         except ClientError as e:
             return False
+
+    def __resolve_relative_path__(self, path):
+        arg_path = path.split('/')
+        arg_path[:] = [x for x in arg_path if x.strip()]
+        cloud_dir = self.cloud_wDir
+        cloud_path = cloud_dir.split('/')
+        cloud_path[:] = [x for x in cloud_path if x.strip()]
+           
+        if arg_path[0] == '.':
+            arg_path.pop(0)
+            if len(arg_path) == 0:
+                return True, self.cloud_wDir
+            else:
+                arg_path_str = '/'.join(arg_path)
+                if not cloud_path[-1].endswith('/'):
+                    cloud_path[-1] += '/'
+                return True, '/'.join(cloud_path)
+                
+        elif arg_path[0] == '..':
+            while arg_path[0] == '..':
+                if len(cloud_path) == 0:
+                    err_msg = 'Invalid Arguments: cannot go beyond the top-layer of the bucket.'
+                    return False, err_msg
+                else:
+                    cloud_path.pop()
+                    arg_path.pop(0)
+
+                    if len(arg_path) == 0:
+                        break
+            if len(arg_path) > 0:
+                arg_path_str = '/' + '/'.join(arg_path)
+                return True, '/'.join(cloud_path.append(arg_path_str))
+            else:
+                return True, ''
+        else:
+            if not path.endswith('/'):
+                path += '/'
+            return True, path
         
     # usa-east-1 will return None
     def get_location(client, bucket_name) -> str:
@@ -170,6 +208,8 @@ class aws_s3(S5Shell.s5shell):
                     self.cloud_wDir = ''
                     success = True
                     if bucket_path[1] != '':
+                        if not bucket_path[1].endswith('/'):
+                            bucket_path[1] += '/'
                         try:
                             self.s3_client.head_object(Bucket=bucket_path[0], Key=bucket_path[1])
                             self.cloud_wDir = bucket_path[1]
@@ -184,71 +224,42 @@ class aws_s3(S5Shell.s5shell):
                 success = False
         #relative path - change to a resolve_relative_path() function
         elif self.cloud_cur_bucket != '/':
-            arg_path = args.split('/')
-            print(arg_path)
-            arg_path[:] = [x for x in arg_path if x.strip()]
-            print(arg_path)
-            cloud_dir = self.cloud_wDir
-            cloud_path = cloud_dir.split('/')
-            cloud_path[:] = [x for x in cloud_path if x.strip()]
-            print('cloud-path:', cloud_path)
-           
-            if arg_path[0] == '.':
-                arg_path.pop(0)
-                print('arg_path1:', arg_path)
-                if len(arg_path) == 0:
+            status, msg = self.__resolve_relative_path__(args)
+            if status:
+                if not msg or msg == '':
+                    self.cloud_wDir = ''
                     success = True
                 else:
-                    arg_path_str = '/'.join(arg_path)
-                    print('arg_path_str:', arg_path_str)
-                    cloud_path.insert(len(cloud_path), arg_path_str)
-                
-            elif arg_path[0] == '..':
-                while arg_path[0] == '..':
-                    if len(cloud_path) == 0:
-                        err_msg = 'Invalid Arguments: cannot go beyond the top-layer of the bucket.'
-                        success = False
-                        break
-                    else:
-                        cloud_path.pop()
-                        arg_path.pop(0)
-
-                        if len(arg_path) == 0:
-                            break
-                if len(arg_path) > 0:
-                    arg_path_str = '/' + '/'.join(arg_path)
-                    cloud_path.append(arg_path_str)
-                else:
-                    cloud_path = ''
-            else:
-                if self.__object_exists__(self.s3_client, args):
-                    self.cloud_wDir = args
-                    success = True
-                else:
-                    success = False
-                    err_msg = ('The object at ' + self.cloud_cur_bucket + ':' + args
+                    try:
+                        self.s3_client.head_object(Bucket=self.cloud_cur_bucket, Key=msg)
+                        self.cloud_wDir = msg
+                        success = True
+                    except ClientError as e:
+                        if err_msg == '':
+                            err_msg = ('The object at ' + self.cloud_cur_bucket + ':' + msg 
                                     + ' does not exist or is inaccessible' + os.linesep)
-            
-            if not cloud_path or cloud_path == '':
+                        success = False
+            else:
+                err_msg = msg
+                success = False
+        else:
+            result = self.__bucket_exists__(self.s3_resource, args)
+            if result[0]:
+                self.cloud_cur_bucket = args
                 self.cloud_wDir = ''
                 success = True
             else:
-                cloud_path_str = '/'.join(cloud_path)
-                try:
-                    self.s3_client.head_object(Bucket=self.cloud_cur_bucket, Key=cloud_path_str)
-                    self.cloud_wDir = args
-                    success = True
-                except ClientError as e:
-                    if err_msg == '':
-                        err_msg = ('The object at ' + self.cloud_cur_bucket + ':' + cloud_path_str 
-                                + ' does not exist or is inaccessible' + os.linesep)
-                    success = False
-
+                err_msg = 'The bucket: ' + args + ' does not exist or is inaccessible' + os.linesep
         if not success:
-            print('Error:', err_msg, 'Usages:', os.linesep, 'ch_folder <bucket name>', os.linesep,
-                    'ch_folder <bucket name>:<full pathname of directory>', os.linesep,
-                    'ch_folder <full or relative pathname of local directory>'
-                    )
+            if self.cloud_cur_bucket == '/':
+                usage_msg = ('Usages:' +  os.linesep + ' ch_folder <bucket name>' + os.linesep +
+                            ' ch_folder <bucket name>:<full pathname of directory>' + os.linesep +
+                            ' ch_folder <full or relative pathname of local directory>')                
+            else:
+                usage_msg = ('Usages:' + os.linesep + ' ch_folder <bucket name>:' + os.linesep +
+                            ' ch_folder <bucket name>:<full pathname of directory>' + os.linesep +
+                            ' ch_folder <full or relative pathname of local directory>')
+            print('Error: ', err_msg, usage_msg)
 
         return 0 if success else 1
 
