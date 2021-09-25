@@ -3,8 +3,8 @@ import os
 class s5shell:
     
     local_wDir = os.getcwd()
-    cloud_cur_bucket = ''
-    cloud_wDir = '/'
+    cloud_cur_bucket = '/'
+    cloud_wDir = ''
 
     def do_exit(self, args):
         return 0
