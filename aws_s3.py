@@ -4,6 +4,7 @@ from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 import boto3
 import configparser
 import re
+import logging
 
 import S5Shell
 
@@ -54,59 +55,103 @@ class aws_s3(S5Shell.s5shell):
         return s3
 
     def __bucket_exists__(self, resource, name) -> list:
+        print('bucket exists:', name)
         try: 
             resource.meta.client.head_bucket(Bucket=name)
-        except ClientError as err:
+        except ClientError as e:
             # logging.error(err)
-            return [False, int(err.response['Error']['Code'])]
+            return [False, e.response['Error']['Message']]
         except BotoCoreError:
             return [False, 'Invalid Params']
         return [True, None]
 
-    def __object_exists__(self, client, object_path) -> bool:
+    def __object_exists__(self, bucket_name, object_path) -> bool:
         try:
             self.s3_client.head_object(Bucket=self.cloud_cur_bucket, Key=object_path)
             return True
         except ClientError as e:
             return False
 
+    def __is_cloud_dir__(self, bucket_name, object_path) -> bool:
+        try:
+            bucket = self.s3_resource.Bucket(bucket_name)
+            for object_summary in bucket.objects.filter(Prefix=object_path):
+                return True
+        except ClientError as e:
+            print(e.response['Error']['Message'])
+        return False
+
+    
+    def __resolve_cloud_path__(self, raw_path):
+        bucket_name = ''
+        key = ''
+        if ':' in raw_path:
+            try:
+                path = raw_path.split(':', 1)
+                bucket_name = path[0]
+                key = path[1]
+                if not self.__is_cloud_dir__(bucket_name, key):
+                    return [False, bucket_name, 'Directory does not Exist']
+                else:
+                    return [True, bucket_name, key]
+            except IndexError or TypeError or ValueError:
+                return [False, None, 'Invalid arguments']
+        elif './' in raw_path or '../' in raw_path or not raw_path:
+            result = self.__resolve_relative_path__(raw_path)
+            result.insert(1, self.cloud_cur_bucket)
+            if not self.__is_cloud_dir__(result[1], result[2]):
+                result[0] = False
+                result[2] = 'Directory does not exist'
+                return result
+            if result[2].startswith('/'):
+               result[2] = result[2][1:] #remove first char
+            return result
+        else:
+            key = ''
+            result = self.__bucket_exists__(self.s3_resource, raw_path)
+            result.insert(1, raw_path)
+            return result
+
     def __resolve_relative_path__(self, path):
+        if not path:
+            return [True, self.cloud_wDir]
         arg_path = path.split('/')
         arg_path[:] = [x for x in arg_path if x.strip()]
         cloud_dir = self.cloud_wDir
         cloud_path = cloud_dir.split('/')
         cloud_path[:] = [x for x in cloud_path if x.strip()]
-           
         if arg_path[0] == '.':
             arg_path.pop(0)
             if len(arg_path) == 0:
-                return True, self.cloud_wDir
+                return [True, self.cloud_wDir]
             else:
                 arg_path_str = '/'.join(arg_path)
-                if not cloud_path[-1].endswith('/'):
-                    cloud_path[-1] += '/'
-                return True, '/'.join(cloud_path)
+                cloud_path.append(arg_path_str)
+                return [True, '/'.join(cloud_path)]
                 
         elif arg_path[0] == '..':
             while arg_path[0] == '..':
                 if len(cloud_path) == 0:
                     err_msg = 'Invalid Arguments: cannot go beyond the top-layer of the bucket.'
-                    return False, err_msg
+                    return [False, err_msg]
                 else:
                     cloud_path.pop()
                     arg_path.pop(0)
-
+                    print('cloud:', cloud_path, 'arg_path:', arg_path)
                     if len(arg_path) == 0:
                         break
             if len(arg_path) > 0:
-                arg_path_str = '/' + '/'.join(arg_path)
-                return True, '/'.join(cloud_path.append(arg_path_str))
+                arg_path_str = '/'.join(arg_path)
+                if len(cloud_path) == 0:
+                    return [True, arg_path_str]
+                else:
+                    return [True, '/' + '/'.join(cloud_path.append(arg_path_str))]
             else:
-                return True, ''
+                return [True, '']
         else:
             if not path.endswith('/'):
                 path += '/'
-            return True, path
+            return [True, path]
         
     # usa-east-1 will return None
     def get_location(client, bucket_name) -> str:
@@ -116,75 +161,88 @@ class aws_s3(S5Shell.s5shell):
     def do_lc_copy(self, args):
         success = False
         err = None
-        if args == None:
+        key = None
+        if len(args) < 2:
             success = False
             err = 'Invalid number of arguments.'
         else:
-            try:
-                local_path, bucket_path = args.split(' ', 1)
-            except IndexError:
-                success = False
-                err = 'Invalid arguments.'
-            abs_local_path = self.get_abs_local_path(local_path)
+            abs_local_path = self.get_abs_local_path(args[0])
 
             if(abs_local_path == None or not os.path.exists(abs_local_path)):
                 success = False
-                err = local_path + ' does not exist or is inaccessible.'
+                err = args[0] + ' does not exist or is inaccessible.'
             else:
                 try:
-                    bucket_name, cloud_path = bucket_path.split(":", 1)
+                    result = self.__resolve_cloud_path__(args[1])
+                    if result[0]:
+                        bucket_name = result[1]
+                        key = result[2]
+                    else:
+                        err = result[2]
+                        success = False
                 except IndexError or ValueError:
                     success = False
-                if self.__bucket_exists__(self.s3_resource, bucket_name)[0] :
+                if err == None:
+                    if not key or key == '' or bucket_name == '/':
+                        err = 'Invalid cloud path'
                     try:
-                        response = self.s3_client.upload_file(abs_local_path, bucket_name, cloud_path)
+                        if key.endswith('/'):
+                            key = key[:-1]
+                        
+                        print('abs_local:', abs_local_path, '\tbucket:', bucket_name,'\tkey:', key)
+                        response = self.s3_client.upload_file(abs_local_path, bucket_name, key)
                         success = True
                     except ClientError as e:
                         err_code = e.response['Error']['Code']
-                        err = 'Error: ' + err_code
+                        err = 'Error: ' + err_code + ' ' + e.response['Error']['Message']
                         success = False
-                else:
-                    err = 'Bucket ' + bucket_name + ' does not exist'
-                    success = False
         if err != None: 
-            print('Error:', err, os.linesep, 'Usage: lc_copy <path of local file> <bucket name>:<full path of s3 object>')
+            print('Error:', err, os.linesep, 'Usage:', os.linesep, 'lc_copy <path of local file> <bucket name>:<full path of s3 object>')
         return 0 if success else 1
-        
+
     def do_cl_copy(self, args):
-        print('Cloud copy:', args)
         success = False
         err = None
-
-        if args == None:
+        if len(args) < 2:
             success = False
             err = 'Invalid number of arguments.'
         else:
-            args_list = args.split(' ')
-        
-        if len(args_list) != 2:
-            success = False
-            'Invalid number of arguments.'
-        else:
-            abs_path = self.get_abs_local_path(args_list[1])
-            if ':' in args_list[0]:
+            abs_local_path = self.get_abs_local_path(args[1])
+            if abs_local_path and os.path.exists(abs_local_path):
+                    success = False
+                    err = args[1] + ' already exists.'
+            else:
                 try:
-                    bucket_path = args_list[0].split(':', 1)
-                    result = self.__bucket_exists__(self.s3_resource, bucket_path[0])
+                    if not abs_local_path: abs_local_path = os.path.join(self.local_wDir, args[1])
+                    result = self.__resolve_cloud_path__(args[0])
+                    print(result)
                     if result[0]:
+                        bucket_name = result[1]
+                        key = result[2]
+                    else:
+                        err = result[2]
+                        success = False
+                except IndexError or ValueError:
+                    success = False
+                if err == None:
+                    if not key or key == '' or bucket_name == '/':
+                        err = 'Invalid cloud path'
+                    else:
+                        if key.endswith('/'):
+                            key = key[:-1]
                         try:
-                            response = self.s3_client.download_file(bucket_path[0], bucket_path[1], abs_path)
+                            print('abs_local:', abs_local_path, '\tbucket:', bucket_name,'\tkey:', key)
+                            response = self.s3_client.download_file(bucket_name, key, abs_local_path)
                             success = True
                         except ClientError as e:
                             err_code = e.response['Error']['Code']
-                            err = 'Error: ' + err_code + ' Failed to download file:', args
+                            err = 'Error: ' + err_code + ' ' + e.response['Error']['Message']
                             success = False
-                    else:
-                        err = 'The bucket', bucket_path[0], 'does not exist or is inaccessible.'
-                except IndexError:
-                    success = False
         if err != None: 
-            print('Error:', err, os.linesep, 'Usage:', os.linesep, 'cl_copy <bucket name>:<full pathname of S3 File> <path to local file>', os.linesep, 'cl_copy <pathname of S3 File> <path to local file>')
+            print('Error:', err, os.linesep, 'Usage: cl_copy <path of s3 object> <path of local file>')
         return 0 if success else 1
+
+
 
     def do_create_bucket(self, args):
         print('create a bucket:', args)
@@ -193,22 +251,15 @@ class aws_s3(S5Shell.s5shell):
         pattern = re.compile('^[a-z0-9-]*$')
         
         #default
-        region = 'ca-central-1'
+        region = 'us-east-2'
         bucket_name = None
         acl = 'private'
 
-        try:
-            args_list = args.split(' ')
-            if '-l' in args_list:
-                region = args_list[args_list.index('-l') + 1]
-                print(region)
-        except IndexError:
-            pass
-        except ValueError:
-            pass
+        if '-l' in args:
+            region = args[args.index('-l') + 1]
 
-        if len(args_list) > 1:
-            bucket_name = args_list[0]
+        if len(args) > 1:
+            bucket_name = args[0]
         else:
             bucket_name = args
 
@@ -269,10 +320,9 @@ class aws_s3(S5Shell.s5shell):
     # evaluate if folder exists using s3.Object('bucket', 'object name').load()
     # if at root and there is no : then it must be a bucket
     # ch_folder bucket_name: goes directly to a new bucket?
-
     def do_ch_folder(self, args):
-        if isinstance(args, list):
-            args[:] = [x for x in args if x.strip()]
+     
+        args[:] = [x for x in args if x.strip()]
         success = False
         err_msg= ''
         if args == None  or  ' ' in args:
@@ -280,11 +330,26 @@ class aws_s3(S5Shell.s5shell):
             success = False
         
         #go back to top-level
-        elif args == '/':
-           self.cloud_cur_bucket = '/'
-           self.cloud_wDir = ''
-           success = True
+        elif args[0] == '/':
+            self.cloud_cur_bucket = '/'
+            self.__set_cur_cloud_dir__(None)
+            success = True
+            return 0
+        else:
+            result = self.__resolve_cloud_path__(args[0])
+            if result[0]:
+                self.cloud_cur_bucket = result[1]
+                if result[2] == None:
+                   self.__set_cur_cloud_dir__(None)
+                else:
+                    self.__set_cur_cloud_dir__(result[2])
+                success = True
+            else:
+                success = False
 
+
+
+        if True: pass
         elif ':' in args:
             try:
                 bucket_path = args.split(':', 1)
@@ -358,31 +423,41 @@ class aws_s3(S5Shell.s5shell):
     def do_list(self, args):
         print('list buckets', args)
         success = False
-        err = ''
+        err = None
         bucket_name = ''
         key = ''
         objs = []
-        if args == None or args.rstrip(None) == '':
-            bucket_name = '/'
-        elif ':' in args:
-            args_list = args.split(':', 1)
-            bucket_name = args_list[0]
-            key = args_list[1]
-            if not key.endswith('/'):
-                key += '/'
-        else:
-            bucket_name = args
-            key = ''
+        is_detailed = False
 
-        if err == '':
+        if not args or args[0] == None:
+            bucket_name = self.cloud_cur_bucket
+            key = self.cloud_wDir
+        else:
+            if '-l' in args:
+                is_detailed = True
+                args.remove('-l')
+            result = self.__resolve_cloud_path__('/'.join(args))
+            print(result)
+            if result[0]:
+                bucket_name = result[1]
+                key = result[2]
+                if key == None:
+                    key = ''
+                elif not key.endswith('/'):
+                    key += '/'
+            else:
+                err = result[2]
+       
+        if not err:
             try:
                 if bucket_name == '/':
                     objs = [obj.name for obj in self.s3_resource.buckets.all()]
+                    
                     success = True
                 else:
                     bucket = self.s3_resource.Bucket(bucket_name)
                     objs = [obj.key for obj in bucket.objects.filter(Prefix=key)]
-                    print(objs)
+                    
                     success = True
             except ClientError as e:
                 err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
@@ -392,13 +467,74 @@ class aws_s3(S5Shell.s5shell):
                 success = False
 
         if success:
-            if len(objs) > 3:
-                for col1, col2, col3 in zip(objs[::3], objs[1::3], objs[2::3]):
-                    print('{:<25}{:<25}{:<}'.format(col1, col2, col3))
-            else:
-                for obj in objs:
-                    print('{:<25}'.format(obj), end='')
+            obj_dict = []
+            for obj in objs:
+               obj_dict.append({'is_valid': True, 'key': obj, 'path': obj})
 
+            for i in range(len(obj_dict)):
+                if key:
+                    index = obj_dict[i]['path'].find(key)
+                    if index >= 0:
+                        obj_dict[i]['path'] = obj_dict[i]['path'][index + len(key):]
+                if obj_dict[i]['path'].count('/') == 2:
+                    index = obj_dict[i]['path'].find('/')
+                    obj_dict[i]['path'] = obj_dict[i]['path'][:- len(obj_dict[i]['path']) + index + 1]
+                elif obj_dict[i]['path'].count('/') > 0 and not obj_dict[i]['path'].endswith('/'):
+                    obj_dict[i]['is_valid'] = False
+            
+                if not obj_dict[i]['path'].strip() or obj_dict[i]['path'].count('/') > 1:
+                    obj_dict[i]['is_valid'] = False
+                # invalidate entries with the same path
+                for k in range(0, i):
+                    if obj_dict[i]['path'] == obj_dict[k]['path']:
+                        obj_dict[i]['is_valid'] = False
+                
+            obj_dict = [item for item in obj_dict if item['is_valid']]
+
+            # print(obj_dict)
+            if len(obj_dict) == 0:
+                print('There are no items to display.')
+            elif is_detailed:
+                if not key == '/' and not bucket_name == '/':
+                    #this tabular format code will break easily given inputs outside the defined ranges below
+                    print('%-35s' % 'Object' + '%-34s' % 'Last Modified' + '%-10s' % 'Owner' + '%-28s' % 'Type' + '%8s' % 'Size (KB)')   
+                    for i in range(len(obj_dict)):
+                        obj_key = ''
+                        last_mod = ''
+                        size = 0.0
+                        owner = ''
+                        obj_type = ''
+                        if obj_dict[i]['is_valid']:
+                            try:
+                                # get summary
+                                object_summary = self.s3_resource.ObjectSummary(bucket_name, obj_dict[i]['key'])
+                                obj_key = obj_dict[i]['path']
+                                last_mod = object_summary.last_modified
+                                size = round(object_summary.size / 1024, 2)
+                                owner = object_summary.owner
+                                #load content type and other (unused) attributes 
+                                object_summary = object_summary.get()
+                                # print(object_summary)
+                                obj_type =  object_summary['ContentType']
+                                # trim charset info
+                                obj_type = obj_type.split(';', 1)[0]
+                                
+                            except ClientError as e:
+                                    err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
+                                    success = False
+                            if not err:  
+                                print('%-35s' % obj_key + '%-34s' % last_mod + '%-10s' % owner + '%-28s' % obj_type + '%6.2f' % size)
+                               
+            else: #this tabular format code will break easily given inputs > 30 characters in length
+                
+                if len(objs) >= 3:
+                    while not len(objs) % 3 == 0:
+                        objs.append({'is_valid': False, 'key': '', 'path': ''})
+                    for col1, col2, col3 in zip(obj_dict[::3], obj_dict[1::3], obj_dict[2::3]):
+                        print('{:<35}{:<30}{:<}'.format(col1['path'], col2['path'], col3['path']))
+                else:
+                    for obj in obj_dict:
+                        print('{:<35}'.format(obj['path']), end='')
 
         if not success:
             print('Error:', err, os.linesep, 'Usage: list')
@@ -411,25 +547,24 @@ class aws_s3(S5Shell.s5shell):
         src = []
         dest = []
         try:
-            args_list = args.split(' ')
-            if len(args_list) != 2:
+            if len(args) != 2:
                 err = 'Invalid number of arguments.'
             else:
-                if ':' in args_list[0]:
-                    src = args_list[0].split(':', 1)
+                if ':' in args[0]:
+                    src = args[0].split(':', 1)
                 else:
                     src[0] = self.cloud_cur_bucket
-                    result, msg = self.__resolve_relative_path__(args_list[0])
+                    result, msg = self.__resolve_relative_path__(args[0])
                     if result:
                         src[1] = msg
                     else:
                         success = False
                         err = msg
-                if ':' in args_list[1]:
-                    dest = args_list[1].split(':', 1)
+                if ':' in args[1]:
+                    dest = args[1].split(':', 1)
                 else:
                     dest[0] = self.cloud_cur_bucket
-                    result, msg = self.__resolve_relative_path__(args_list[1])
+                    result, msg = self.__resolve_relative_path__(args[1])
                     if result:
                         dest[1] = msg
                     else:
@@ -474,15 +609,15 @@ class aws_s3(S5Shell.s5shell):
             except ClientError as e:
                 err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
             count = 0
-            for objects in bucket.objects.filter(Prefix=key):
-                count += 1
-            
-            if count <= 1:
-                try:
-                    self.s3_resource.Object(bucket_name, key).delete()
-                    success = True
-                except ClientError as e:
-                    err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
+            print(key)
+            objects = [object.key for object in bucket.objects.filter(Prefix=key)]
+            if len(objects) <= 2:
+                if key in objects:
+                    try:
+                        self.s3_resource.Object(bucket_name, key).delete()
+                        success = True
+                    except ClientError as e:
+                        err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
             else:
                 err = args + ' is not empty.'
             
@@ -494,12 +629,15 @@ class aws_s3(S5Shell.s5shell):
     def do_delete_bucket(self, args):
         print('delete bucket', args)
         success = False
-        if self.cloud_cur_bucket == args:
-            err = 'Cannot delete your current working bucket (try \'ch_folder /\').'
+        if not len(args) == 1:
+            success = False
+            err = 'Invalid number of arguments.'
+        elif self.cloud_cur_bucket == args[0]:
+            err = 'Cannot delete your current working bucket (try \'ch_folder /\' first).'
             success = False
         else:
             try:
-                response = self.s3_client.delete_bucket(Bucket=args)
+                response = self.s3_client.delete_bucket(Bucket=args[0])
                 success = True
             except ClientError as e:
                 err = e.response['Error']['Code'] + ' ' + e.response['Error']['Message']
