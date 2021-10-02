@@ -16,21 +16,29 @@ def run_sys_cmd(command):
 def get_cmd(input):
     input = input.rstrip()
     if not len(input):
-        return None
+        return None, None
     
     command, args = [None, None]
     try:
         command, args = input.split(None, 1)
     except ValueError:
        command = input
+       args = None
     return command, args
 
 def run_cmd(cloud, command, args):
     try:
         func = getattr(cloud, 'do_' + command)
     except AttributeError:
-        print('-S5: {}: command not found'.format(command))
-        return 1
+        args = [x for x in args if not x == None and x.strip()]
+        if len(args):
+            args = ' '.join(args)
+        else: args = ''
+        if not run_sys_cmd(command + ' ' + args):
+            return 0
+        else:
+            print('-S5: {}: command not found'.format(command))
+            return 1
     return func(args)
     
 def S5():
@@ -59,13 +67,24 @@ def S5():
             continue
 
         command, args = get_cmd(input)
+        if args:
+            args_list = args.split()
+            args_list[:] = [x for x in args_list if x.strip()]
+        else:
+            args_list = [args]
         result = 1
 
         if command == 'quit' or command == 'exit':
             stop = True
-        result = run_cmd(cloud, command, args)
-        print('result:', result)
 
+        if command == None:
+            result = 0
+        else:
+            try:
+                result = run_cmd(cloud, command, args_list)
+            except KeyboardInterrupt:
+                pass
+        # print('result:', result)
     return False
 
 ### Main ###

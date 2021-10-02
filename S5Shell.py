@@ -10,7 +10,7 @@ class s5shell:
         return 0
 
     def do_quit(self, args):
-        return 0
+        return self.do_exit(args)
 
     def do_lc_copy(self, args):
         pass
@@ -50,3 +50,12 @@ class s5shell:
             return os.path.normpath(os.path.join(self.local_wDir, path))
         else:
             return None
+
+    def __set_cur_cloud_dir__(self, path):
+        if not path:
+            self.cloud_wDir = ''
+            return None
+        if not path.endswith('/'):
+            path += '/'
+        self.cloud_wDir = path
+        return None
