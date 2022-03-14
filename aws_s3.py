@@ -56,7 +56,6 @@ class aws_s3(S5Shell.s5shell):
         try: 
             self.s3_resource.meta.client.head_bucket(Bucket=name)
         except ClientError as e:
-            # logging.error(err)
             return [False, e.response['Error']['Message']]
         except BotoCoreError:
             return [False, 'Invalid Params']
@@ -454,8 +453,6 @@ class aws_s3(S5Shell.s5shell):
                 elif obj_dict[i]['path'].count('/') == 1:
                     if not obj_dict[i]['path'].endswith('/'):
                         obj_dict[i]['path'] = obj_dict[i]['path'].split('/', 1)[0] + '/'
-                    # else:
-                    #     obj_dict[i]['is_valid'] = False
             
                 if not obj_dict[i]['path'].strip() or obj_dict[i]['path'].count('/') > 1:
                     obj_dict[i]['is_valid'] = False

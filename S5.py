@@ -84,7 +84,6 @@ def S5():
                 result = run_cmd(cloud, command, args_list)
             except KeyboardInterrupt:
                 pass
-        # print('result:', result)
     return False
 
 ### Main ###
