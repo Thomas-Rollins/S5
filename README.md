@@ -1,5 +1,5 @@
-# CIS 4010 Cloud Computing - Assignment 1
-### Thomas Rollins - 0802753
+# S5 - An AWS S3 Shell
+### Thomas Rollins
 #
 
 ## General Information
@@ -7,11 +7,13 @@
 `<realtive object path>` where the current working folder is set (not at the top-level).
 - Realtive paths are assumed to follow the `./` represents current working directory and `../` represents up one level from the current working directory.
 - All S3 bucket names may only contain lower case alphanumeric characters (`a-z0-9`) and hyphens (`-`).
-- All S3 "directory" names may only contain alphanumeric characters (`A-Za-z0-9`). 
-
+- All S3 "directory" names may only contain alphanumeric characters (`A-Za-z0-9`) and hyphens (`-`).
+- All S3 Object creation/movement assumes a unique object key was given and will overwrite any existing object which matches the key given. It is assumed versioning is not enabled.
+- Requires python 3.7.4+
+- Tested and functional on Windows 10 and Debian GNU/Linux 10 (buster); should support all operating systems with a standard UNIX posixpath or Windows ntpath which support python 3.7.4+
 
 ## Usage
-- `python ./A1.py`
+- `python3 ./S5.py`
 #
 
 # Avaliable S3 Commands
@@ -25,7 +27,7 @@
     - `/` represents the root (top level)
     ### Example Usage:
         S5> cwf
-        cis4010-rollins:test/
+        rollins_bucket:test/
     ## Note:
 
 ##  `list [-l]`
@@ -39,13 +41,13 @@
     #### Output :   `<bucket name>:<S3 Object Key>`
     - `/` represents the root (top level)
     ### Example Usage:
-        S5> list cis4010-rollins
-        test/                              test242/                      test_upload.txt
-        cis4010-rollins:test/
-        S5> list cis4010-rollins -l
+        S5> list rollins_bucket
+        test/                              test2/                           test_upload.txt
+        rollins_bucket:test/
+        S5> list rollins_bucket -l
         Object                             Last Modified                     Owner     Type                        Size (KB)
         test/                              2021-09-30 17:37:20+00:00         None      application/x-directory       0.00
-        test242/                           2021-09-30 22:04:06+00:00         None      application/x-directory       0.00
+        test2/                             2021-09-30 22:04:06+00:00         None      application/x-directory       0.00
         test_upload.txt                    2021-09-30 17:23:52+00:00         None      binary/octet-stream           0.00
         test_upload_2.txt                  2021-09-30 17:24:41+00:00         None      binary/octet-stream           0.42
 
@@ -61,10 +63,10 @@
     #### Output :  None
     - `/` represents the root (top level)
     ### Example Usage:
-        S5> ch_folder cis4010-rollins
+        S5> ch_folder rollins_bucket
         S5> ./test
         S5> cwf
-        cis4010-rollins:test/
+        rollins_bucket:test/
     ## Note:
     - In the case where the current working folder is set to a bucket `ch_folder <path>` where `<path>` does not contain a `:` or a relative path with `./` or `../` S5 will try to resolve it as `./<path>`. If the directory does not exist or is inaccessible then it will then silently attempt to resolve `<path>` as a bucket name. To explicity change the current working folder to a new bucket, use: `ch_folder <bucket name>:`
 
@@ -84,8 +86,8 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> create_bucket cis4010-rollins
-        S5> create_bucket cis4010-rollins-test -r ca-central-1 -acl private
+        S5> create_bucket rollins_bucket
+        S5> create_bucket rollins_bucket-test -r ca-central-1 -acl private
    
 ## `delete_bucket <bucket name>`
 ### Deletes an existing empty bucket in S3.
@@ -94,7 +96,7 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> delete_bucket cis4010-rollins
+        S5> delete_bucket rollins_bucket
 
 
 ## Object Commands
@@ -107,7 +109,7 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> create_folder cis4010-rollins:test
+        S5> create_folder rollins_bucket:test
         S5> create_folder ./test1/test2/test3/test4/
 
     ## Note:
@@ -119,11 +121,12 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> lc_copy ./test.txt cis4010-rollins:test.txt
+        S5> lc_copy ./test.txt rollins_bucket:test.txt
         S5> lc_copy C:\\CIS4010\Assignment_1\test.txt ./dir/test.txt
-        S5> lc_copy /mnt/c/CIS4010/Assignment_1/test.txt cis4010-rollins:dir/test.txt
+        S5> lc_copy /mnt/c/CIS4010/Assignment_1/test.txt rollins_bucket:dir/test.txt
     ## Note:
     -   All local paths follow your host operating system's pathing format.
+    -   When using a relative path you must explictly use `./` or `../`
 
 ## `cl_copy [<path to S3 folder>/]<filename.ext> <path to local file> `
 ### Copies an S3 object to a local location.
@@ -131,12 +134,13 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> cl_copy cis4010-rollins:test.txt ./test.txt
+        S5> cl_copy rollins_bucket:test.txt ./test.txt
         S5> cl_copy ./dir/test.txt C:\\CIS4010\Assignment_1\test.txt 
-        S5> cl_copy cis4010-rollins:dir/test.txt /mnt/c/CIS4010/Assignment_1/test.txt
+        S5> cl_copy rollins_bucket:dir/test.txt /mnt/c/CIS4010/Assignment_1/test.txt
 
     ## Note:
     -   All local paths follow your host operating system's pathing format.
+    -   When using a relative S3 path you must explictly use `./` or `../`
 
 ## `ccopy <path to S3 object> <path to S3 Location>`
 ### Copies an S3 object to another S3 location.
@@ -144,7 +148,7 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> ccopy cis4010-rollins:test.txt cis4010-rollins-2:test.txt
+        S5> ccopy rollins_bucket:test.txt rollins_bucket-2:test.txt
         S5> ccopy ./dir/test.txt ../test.txt
 
 ## `cdelete <path to S3 object>`
@@ -153,11 +157,27 @@
     #### Output :  None
     
     ### Example Usage:
-        S5> cdelete cis4010-rollins:test.txt
+        S5> cdelete rollins_bucket:test.txt
         S5> cdelete ./test
     
     ## Note:
     -   A Folder must be empty or the operation will fail
 #
 ## Host System Commands
--   S5 will attempt to pass unrecongized commands to the default terminal and output the result.
+-   S5 will attempt to directly pass unrecongized commands to the host operating system's default terminal and output the result.
+        
+    ### Example Usage:
+        S5> ping google.ca
+        
+        Pinging google.ca [172.217.1.3] with 32 bytes of data:
+        Reply from 172.217.1.3: bytes=32 time=23ms TTL=116
+        Reply from 172.217.1.3: bytes=32 time=35ms TTL=116
+        Reply from 172.217.1.3: bytes=32 time=21ms TTL=116
+        Reply from 172.217.1.3: bytes=32 time=26ms TTL=116
+
+        Ping statistics for 172.217.1.3:
+            Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+        Approximate round trip times in milli-seconds:
+            Minimum = 21ms, Maximum = 35ms, Average = 26ms
+    ## Note:
+    -   Deleting the last object in a directory will also delete the directory.

@@ -1,10 +1,8 @@
 import os
-from typing import Type
 from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError     #Error handling
 import boto3
 import configparser
 import re
-import logging
 
 import S5Shell
 
@@ -225,35 +223,39 @@ class aws_s3(S5Shell.s5shell):
             success = False
             err = 'Invalid number of arguments.'
         else:
-            abs_local_path = self.get_abs_local_path(args[0])
+            abs_local_path = self.get_abs_local_path(args[1])
             if abs_local_path and os.path.exists(abs_local_path):
-                    success = False
-                    err = args[0] + ' already exists.'
+                success = False
+                err = args[1] + ' already exists.'
             else:
-                try:
-                    if not abs_local_path: abs_local_path = os.path.join(self.local_wDir, args[1])
-                    result = self.__resolve_cloud_path__(args[0], False)
-                    if result[0]:
-                        bucket_name = result[1]
-                        key = result[2]
-                    else:
-                        err = result[3]
-                        success = False
-                except IndexError or ValueError:
-                    success = False
-                if err == None:
-                    if not key or key == '' or bucket_name == '/':
-                        err = 'Invalid cloud path'
-                    else:
-                        if key.endswith('/'):
-                            key = key[:-1]
-                        try:
-                            response = self.s3_client.download_file(bucket_name, key, abs_local_path)
-                            success = True
-                        except ClientError as e:
-                            err_code = e.response['Error']['Code']
-                            err = 'Error: ' + err_code + ' ' + e.response['Error']['Message']
+                if not abs_local_path:
+                    abs_local_path = os.path.normpath(os.path.join(self.local_wDir, (args[1])))
+                if os.path.isdir(os.path.split(abs_local_path)[0]):
+                    try:
+                        result = self.__resolve_cloud_path__(args[0], False)
+                        if result[0]:
+                            bucket_name = result[1]
+                            key = result[2]
+                        else:
+                            err = result[3]
                             success = False
+                    except IndexError or ValueError:
+                        success = False
+                    if err == None:
+                        if not key or key == '' or bucket_name == '/':
+                            err = 'Invalid cloud path'
+                        else:
+                            if key.endswith('/'):
+                                key = key[:-1]
+                            try:
+                                response = self.s3_client.download_file(bucket_name, key, abs_local_path)
+                                success = True
+                            except ClientError as e:
+                                err_code = e.response['Error']['Code']
+                                err = 'Error: ' + err_code + ' ' + e.response['Error']['Message']
+                                success = False
+                else:
+                    err = os.path.split(abs_local_path)[0] + ' does not exist or is inaccessible.'
         if err != None: 
             print('Error:', err, os.linesep, 'Usage: cl_copy <path of s3 object> <path of local file>')
         return 0 if success else 1
@@ -580,6 +582,8 @@ class aws_s3(S5Shell.s5shell):
                         success = True
                     except ClientError as e:
                         err = e.response['Error']['Code'] + '. ' + e.response['Error']['Message']
+                elif len(objects) == 1:
+                    err = ' '.join(args) + ' is not an empty folder.'
                 else:
                     err = ' '.join(args) + ' does not exist or is inaccessible.'
             else:

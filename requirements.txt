@@ -1,0 +1,16 @@
+numpy==1.21.2
+awscrt==0.12.3
+brotli==1.0.9
+cryptography==3.4.8
+Cython==0.29.24
+docutils==0.17.1
+importlib_metadata==4.8.1
+keyring==23.2.1
+lockfile==0.12.2
+lxml==4.6.3
+ordereddict==1.1
+protobuf==3.18.0
+pyOpenSSL==20.0.1
+toml==0.10.2
+tornado==6.1
+zipp==3.5.0

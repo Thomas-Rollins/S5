@@ -1,0 +1,11 @@
+.git/
+temp/
+lib/
+Include/
+Scripts/
+__pycache__
+
+
+temp.*
+pyvenv.cfg
+

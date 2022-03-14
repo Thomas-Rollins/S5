@@ -50,6 +50,12 @@ class s5shell:
             return os.path.normpath(os.path.join(self.local_wDir, path))
         else:
             return None
+    
+    def get_abs_dir_path(self, path):
+        if os.path.isabs(path):
+            return os.path.split(path)[0]
+        else:
+            return os.path.split(os.path.normpath(os.path.join(self.local_wDir, path)))[0]
 
     def __set_cur_cloud_dir__(self, path):
         if not path:
